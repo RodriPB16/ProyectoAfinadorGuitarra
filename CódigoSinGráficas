@@ -1,0 +1,90 @@
+import numpy as np
+import pyaudio
+import struct
+import matplotlib.pyplot as plt
+import scipy.fftpack as fourier
+
+# Configuración de audio
+NOTE_NAMES = 'C C# D D# E F F# G G# A A# B'.split()
+guitar_frequencies = {'E2': 82.41, 'A2': 110.00, 'D3': 146.83, 'G3': 196.00, 'B3': 246.94, 'E4': 329.63}
+
+FRAMES = 1024 * 8
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+Fs = 44100
+
+# Funciones de conversión
+def freq_to_number(f): 
+    if f <= 0:
+        return None  # Evita valores inválidos
+    return 12 * np.log2(f / 440.0) + 69
+
+def number_to_freq(n): return 440.0 * 2.0**((n - 69) / 12.0)
+def note_name(n): return NOTE_NAMES[int(n) % 12] + str(int(n / 12 - 1))
+
+def find_nearest_note(freq):
+    if freq <= 0:
+        return "None", 0  # Evita errores si la frecuencia es inválida
+    n = freq_to_number(freq)
+    if n is None:
+        return "None", 0
+    n0 = int(round(n))
+    detected_note = note_name(n0)
+    closest_string = min(guitar_frequencies, key=lambda note: abs(guitar_frequencies[note] - freq))
+    target_freq = guitar_frequencies[closest_string]
+    return detected_note, target_freq
+
+# Inicialización de PyAudio
+p = pyaudio.PyAudio()
+stream = p.open(format=FORMAT, channels=CHANNELS, rate=Fs, input=True, frames_per_buffer=FRAMES)
+
+# Configuración de la gráfica
+fig, (ax, ax1) = plt.subplots(2, 1)
+
+x_audio = np.arange(0, FRAMES, 1)
+x_fft = np.linspace(0, Fs, FRAMES)
+
+times = np.linspace(1, 10, 100)  # Evita límite 0 en escala logarítmica
+frequencies_detected = np.zeros(100)
+frequencies_target = np.zeros(100)
+
+line, = ax.plot(x_audio, np.random.rand(FRAMES), 'r')
+line_fft, = ax1.semilogx(x_fft, np.random.rand(FRAMES), 'b')
+line_freq, = ax1.plot(times, frequencies_detected, 'r', label='Frecuencia Detectada')
+line_target, = ax1.plot(times, frequencies_target, 'g', label='Frecuencia Objetivo')
+ax1.legend()
+
+ax.set_ylim(-32500, 32500)
+ax.set_xlim(0, FRAMES)
+ax1.set_xlim(1, 10)  # Evita error de escala logarítmica
+ax1.set_ylim(50, 4000)
+
+fig.show()
+F = (Fs / FRAMES) * np.arange(0, FRAMES // 2)
+
+while True:
+    data = stream.read(FRAMES)
+    dataInt = struct.unpack(str(FRAMES) + 'h', data)
+    line.set_ydata(dataInt)
+    
+    M_gk = abs(fourier.fft(dataInt) / FRAMES)
+    ax1.set_ylim(0, np.max(M_gk) + 10)
+    line_fft.set_ydata(M_gk)
+    
+    M_gk = M_gk[0:FRAMES // 2]
+    Posm = np.where(M_gk == np.max(M_gk))
+    F_fund = F[Posm][0]
+    detected_note, target_freq = find_nearest_note(F_fund)
+    
+    frequencies_detected = np.roll(frequencies_detected, -1)
+    frequencies_target = np.roll(frequencies_target, -1)
+    frequencies_detected[-1] = F_fund
+    frequencies_target[-1] = target_freq
+    
+    line_freq.set_ydata(frequencies_detected)
+    line_target.set_ydata(frequencies_target)
+    
+    print(f'Frecuencia Detectada: {F_fund:.2f} Hz - Nota: {detected_note} - Frecuencia Objetivo: {target_freq:.2f} Hz')
+    
+    fig.canvas.draw()
+    fig.canvas.flush_events()
